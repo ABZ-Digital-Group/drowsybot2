@@ -2,12 +2,17 @@ import 'dotenv/config';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import {
   Client,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  EmbedBuilder,
   GatewayIntentBits,
   Partials,
   REST,
   Routes,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
+  type ButtonInteraction,
   type Message,
 } from 'discord.js';
 import { QueueStore } from './queue.js';
@@ -220,6 +225,44 @@ function formatQueue(interaction: ChatInputCommandInteraction): string {
   return queue.map((entry, index) => `${index + 1}. <@${entry.userId}>`).join('\n');
 }
 
+function queuePanel(guildId: string, channelId: string): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
+  const queue = queueStore.get(guildId, channelId);
+  const description = queue.length === 0
+    ? 'No singers are waiting. Be the first to join!'
+    : queue.map((entry, index) => `**${index + 1}.** <@${entry.userId}>`).join('\n');
+  const embed = new EmbedBuilder()
+    .setColor(0x7c5cff)
+    .setTitle('Singing Queue')
+    .setDescription(description)
+    .addFields({ name: 'Singers waiting', value: `${queue.length}`, inline: true })
+    .setFooter({ text: 'Use the buttons below to manage your place.' })
+    .setTimestamp();
+  const controls = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('queue:join').setLabel('Join queue').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('queue:leave').setLabel('Leave queue').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('queue:refresh').setLabel('Refresh').setStyle(ButtonStyle.Primary),
+  );
+  return { embeds: [embed], components: [controls] };
+}
+
+async function handleQueueButton(interaction: ButtonInteraction): Promise<void> {
+  if (!interaction.guildId) return;
+  if (interaction.customId === 'queue:refresh') {
+    await interaction.update(queuePanel(interaction.guildId, interaction.channelId));
+    return;
+  }
+  if (interaction.customId === 'queue:join') {
+    const result = queueStore.add(interaction.guildId, interaction.channelId, { userId: interaction.user.id, displayName: interaction.user.displayName });
+    if (result.added) memberStatsStore.recordRequest(interaction.guildId);
+    await interaction.update(queuePanel(interaction.guildId, interaction.channelId));
+    await interaction.followUp({ content: result.added ? `You joined the queue at position ${result.position}.` : `You are already in the queue at position ${result.position}.`, ephemeral: true });
+    return;
+  }
+  const removed = queueStore.remove(interaction.guildId, interaction.channelId, interaction.user.id);
+  await interaction.update(queuePanel(interaction.guildId, interaction.channelId));
+  await interaction.followUp({ content: removed ? 'You left the singing queue.' : 'You are not currently in the singing queue.', ephemeral: true });
+}
+
 async function formatEvents(interaction: ChatInputCommandInteraction): Promise<string> {
   const events = await interaction.guild!.scheduledEvents.fetch();
   const currentEvents = [...events.values()]
@@ -268,6 +311,16 @@ client.on('messageCreate', async (message) => {
 });
 
 client.on('interactionCreate', async (interaction) => {
+  if (interaction.isButton()) {
+    try {
+      await handleQueueButton(interaction);
+    } catch (error) {
+      console.error('Failed to handle queue button:', error);
+      if (!interaction.replied && !interaction.deferred) await interaction.reply({ content: 'The queue could not be updated.', ephemeral: true });
+    }
+    return;
+  }
+
   if (!interaction.isChatInputCommand() || !interaction.guildId) {
     return;
   }
@@ -295,7 +348,7 @@ client.on('interactionCreate', async (interaction) => {
         );
         break;
       case 'queue':
-        await interaction.reply(`**Singing queue**\n${formatQueue(interaction)}`);
+        await interaction.reply(queuePanel(interaction.guildId, interaction.channelId));
         break;
       case 'next': {
         const nextEntry = queueStore.next(interaction.guildId, interaction.channelId);
