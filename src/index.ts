@@ -240,7 +240,8 @@ function queuePanel(guildId: string, channelId: string): { embeds: EmbedBuilder[
   const controls = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId('queue:join').setLabel('Join queue').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId('queue:leave').setLabel('Leave queue').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('queue:refresh').setLabel('Refresh').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('queue:done').setLabel('Done').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('queue:refresh').setLabel('Refresh').setStyle(ButtonStyle.Secondary),
   );
   return { embeds: [embed], components: [controls] };
 }
@@ -259,8 +260,11 @@ async function handleQueueButton(interaction: ButtonInteraction): Promise<void> 
     return;
   }
   const removed = queueStore.remove(interaction.guildId, interaction.channelId, interaction.user.id);
+  if (removed && interaction.customId === 'queue:done') memberStatsStore.recordParticipation(interaction.guildId);
   await interaction.update(queuePanel(interaction.guildId, interaction.channelId));
-  await interaction.followUp({ content: removed ? 'You left the singing queue.' : 'You are not currently in the singing queue.', ephemeral: true });
+  await interaction.followUp({ content: removed
+    ? interaction.customId === 'queue:done' ? 'Nice work. Your turn is marked as complete.' : 'You left the singing queue.'
+    : 'You are not currently in the singing queue.', ephemeral: true });
 }
 
 async function formatEvents(interaction: ChatInputCommandInteraction): Promise<string> {
