@@ -10,6 +10,16 @@ DrowsyBot is a Discord bot for managing a singing queue.
 - `/next` - call the next singer and remove them from the queue
 - `/clear` - clear the queue
 - `/events` - show current and upcoming Discord scheduled events
+- `/stage start channel:<voice channel>` - start managing a normal voice channel as a singing stage
+- `/stage join` - join the stage queue while connected to the managed voice channel
+- `/stage leave` - leave the stage queue
+- `/stage queue` - show the stage queue
+- `/stage next` - call the next singer and rotate server mute state
+- `/stage clear` - clear the stage queue
+- `/stage stop` - stop managing the voice channel as a singing stage
+- `/stage host user:<member>` - choose the host; requires the `Defender` role or higher
+- `/stage cohost user:<member>` - add a co-host; requires the `Defender` role or higher
+- `/stage uncohost user:<member>` - remove a co-host; requires the `Defender` role or higher
 
 ## Setup
 
@@ -19,7 +29,7 @@ DrowsyBot is a Discord bot for managing a singing queue.
 4. Add approved user IDs to `LINK_ALLOWED_USER_IDS`, separated by commas. Leave it empty to block Discord invite links from everyone except bots.
 5. Enable the `Message Content Intent` and `Server Members Intent` under **Bot > Privileged Gateway Intents** in the Discord Developer Portal. The Server Members Intent is required to receive join and leave events.
 6. Set `BOT_API_SECRET` to a long random value. Configure the website's `BOT_API_URL` to the bot server's HTTPS API URL and use the same secret as `BOT_API_SECRET` on the website.
-7. Give the bot `Manage Messages` and `Send Messages` permissions, then install dependencies and build the bot:
+7. Give the bot `Manage Messages`, `Send Messages`, `Manage Channels`, and `Mute Members` permissions, then install dependencies and build the bot:
 
 	```sh
 	npm install
@@ -30,6 +40,10 @@ DrowsyBot is a Discord bot for managing a singing queue.
 For development, use `npm run dev`.
 
 Queues currently live in memory and reset when the bot restarts. Each Discord channel has its own independent queue, so multiple singing sessions can run at the same time in different channels.
+
+Stage queues are attached to normal Discord voice channels and also live in memory. The member who starts the stage is its host: they remain unmuted, can speak at any time, and are not added to the singer queue. The bot server-mutes other singers while they wait and attempts to unmute the singer selected by `/stage next`. Discord must allow the bot to moderate each member for mute changes, which requires the `Mute Members` permission and a sufficiently high bot role.
+
+The `Defender` role is the minimum role allowed to assign a host or co-host. Higher roles are accepted using Discord's role hierarchy.
 
 Discord invite links such as `discord.gg/...`, `discord.com/invite/...`, and `discordapp.com/invite/...` are deleted automatically unless the sender's user ID is listed in `LINK_ALLOWED_USER_IDS`.
 
