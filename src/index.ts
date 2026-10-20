@@ -411,6 +411,7 @@ async function setStageMute(guildId: string, userId: string, mute: boolean): Pro
 }
 
 function hasDefenderAuthority(interaction: ChatInputCommandInteraction): boolean {
+  if (interaction.guild?.ownerId === interaction.user.id) return true;
   const member = interaction.guild?.members.cache.get(interaction.user.id);
   const defenderRole = interaction.guild?.roles.cache.find((role) => role.name.toLowerCase() === 'defender');
   return Boolean(member && defenderRole && member.roles.highest.position >= defenderRole.position);
