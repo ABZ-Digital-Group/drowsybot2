@@ -45,6 +45,16 @@ Stage queues are attached to normal Discord voice channels and also live in memo
 
 The `Defender` role is the minimum role allowed to assign a host or co-host. Higher roles are accepted using Discord's role hierarchy.
 
+The authenticated management API exposes active stage sessions through `GET /admin/api/state` and supports the stage controls used by the management website:
+
+- `POST /admin/api/stage/start` with `guildId`, `channelId`, `hostId`, and optional `announcementChannelId`
+- `POST /admin/api/stage/stop` with `guildId` and `channelId`
+- `POST /admin/api/stage/join-toggle` with `guildId`, `channelId`, and `acceptingJoins`
+- `POST /admin/api/stage/host`, `/cohost`, or `/uncohost` with `guildId`, `channelId`, and `userId`
+- `POST /admin/api/stage/next`, `/clear`, or `/remove-user` with `guildId`, `channelId`, and (for removal) `userId`
+
+Stage actions use the same in-memory session, queue, and Discord mute handling as the slash commands. A stage must be active before its website controls can be used, and disabling joins is enforced for subsequent `/stage join` commands.
+
 Discord invite links such as `discord.gg/...`, `discord.com/invite/...`, and `discordapp.com/invite/...` are deleted automatically unless the sender's user ID is listed in `LINK_ALLOWED_USER_IDS`.
 
 The management API listens on `BOT_API_PORT` and must be protected by a firewall or reverse proxy so only `https://manage.drowsyvocals.com/` can reach it. Do not expose `BOT_API_SECRET` to browser code.

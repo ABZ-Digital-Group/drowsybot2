@@ -133,19 +133,22 @@ async function startAdminApi(): Promise<void> {
           channelId,
           entries: queueStore.get(queueGuildId, channelId),
         }));
-        const trackedStages = queues.map((queue) => {
-          const guild = client.guilds.cache.get(queue.guildId);
-          const channel = guild?.channels.cache.get(queue.channelId);
+        const trackedStages = stageStore.getAll().map((stage) => {
+          const guild = client.guilds.cache.get(stage.guildId);
+          const channel = guild?.channels.cache.get(stage.voiceChannelId);
+          const entries = queueStore.get(stage.guildId, stage.voiceChannelId);
           return {
-            guildId: queue.guildId,
-            guildName: guild?.name ?? queue.guildId,
-            channelId: queue.channelId,
-            channelName: channel?.name ?? queue.channelId,
-            acceptingJoins: true,
-            queueMembers: queue.entries.map((entry) => ({ id: entry.userId, name: entry.displayName })),
-            currentSpeaker: null,
+            guildId: stage.guildId,
+            guildName: guild?.name ?? stage.guildId,
+            channelId: stage.voiceChannelId,
+            channelName: channel?.name ?? stage.voiceChannelId,
+            acceptingJoins: stage.acceptingJoins,
+            queueMembers: entries.map((entry) => ({ id: entry.userId, name: entry.displayName })),
+            hostId: stage.hostId,
+            coHostIds: stage.coHostIds,
+            currentSpeaker: stage.currentSpeakerId,
             songsSung: 0,
-            peakAttendance: queue.entries.length,
+            peakAttendance: entries.length,
             runtimeText: 'Active',
           };
         });
@@ -190,6 +193,7 @@ async function startAdminApi(): Promise<void> {
             id: guild.id,
             name: guild.name,
             textChannels: guild.channels.cache.filter((channel) => channel.isTextBased()).map((channel) => ({ id: channel.id, name: channel.name })),
+            voiceChannels: guild.channels.cache.filter((channel) => channel.type === ChannelType.GuildVoice).map((channel) => ({ id: channel.id, name: channel.name })),
           })),
           queues,
           trackedStages,
@@ -222,20 +226,95 @@ async function startAdminApi(): Promise<void> {
         return sendJson(response, 200, { ok: true, allowedInviteUserIds: [...allowedLinkUserIds] });
       }
 
+      if (url.pathname === '/admin/api/stage/start' && request.method === 'POST') {
+        const body = await readBody(request);
+        const targetGuildId = body.guildId || guildId!;
+        if (!body.channelId || !body.hostId) return sendJson(response, 400, { error: 'channelId and hostId are required.' });
+        const channel = await client.channels.fetch(body.channelId);
+        if (!channel || channel.type !== ChannelType.GuildVoice || channel.guild.id !== targetGuildId) {
+          return sendJson(response, 400, { error: 'channelId must identify a voice channel in the requested guild.' });
+        }
+        const stage = stageStore.start(targetGuildId, channel.id, body.announcementChannelId || channel.id, body.hostId);
+        await setStageMute(targetGuildId, body.hostId, false);
+        return sendJson(response, 200, { ok: true, stage });
+      }
+
+      if (url.pathname === '/admin/api/stage/stop' && request.method === 'POST') {
+        const body = await readBody(request);
+        const targetGuildId = body.guildId || guildId!;
+        if (!body.channelId) return sendJson(response, 400, { error: 'channelId is required.' });
+        const stage = stageStore.get(targetGuildId, body.channelId);
+        if (!stage) return sendJson(response, 404, { error: 'No active stage found.' });
+        if (stage.currentSpeakerId && stage.currentSpeakerId !== stage.hostId) await setStageMute(targetGuildId, stage.currentSpeakerId, true);
+        const cleared = queueStore.clear(targetGuildId, body.channelId);
+        stageStore.stop(targetGuildId, body.channelId);
+        return sendJson(response, 200, { ok: true, result: { stopped: true, cleared } });
+      }
+
+      if (url.pathname === '/admin/api/stage/join-toggle' && request.method === 'POST') {
+        const body = await readBody(request);
+        const targetGuildId = body.guildId || guildId!;
+        if (!body.channelId) return sendJson(response, 400, { error: 'channelId is required.' });
+        const acceptingJoins = body.acceptingJoins !== 'false';
+        if (!stageStore.setAcceptingJoins(targetGuildId, body.channelId, acceptingJoins)) return sendJson(response, 404, { error: 'No active stage found.' });
+        return sendJson(response, 200, { ok: true, result: { acceptingJoins } });
+      }
+
+      const stageRoleMatch = url.pathname.match(/^\/admin\/api\/stage\/(host|cohost|uncohost)$/);
+      if (stageRoleMatch && request.method === 'POST') {
+        const body = await readBody(request);
+        const targetGuildId = body.guildId || guildId!;
+        if (!body.channelId || !body.userId) return sendJson(response, 400, { error: 'channelId and userId are required.' });
+        const stage = stageStore.get(targetGuildId, body.channelId);
+        if (!stage) return sendJson(response, 404, { error: 'No active stage found.' });
+        if (stageRoleMatch[1] === 'host') {
+          stageStore.setHost(targetGuildId, body.channelId, body.userId);
+          await setStageMute(targetGuildId, body.userId, false);
+        } else {
+          stageStore.setCoHost(targetGuildId, body.channelId, body.userId, stageRoleMatch[1] === 'cohost');
+          if (stageRoleMatch[1] === 'cohost') await setStageMute(targetGuildId, body.userId, false);
+        }
+        return sendJson(response, 200, { ok: true, stage: stageStore.get(targetGuildId, body.channelId) });
+      }
+
       const queueMatch = url.pathname.match(/^\/admin\/api\/(?:queue|stage)\/(next|clear|remove-user)$/);
       if (queueMatch && request.method === 'POST') {
         const body = await readBody(request);
         const targetGuildId = body.guildId || guildId!;
         const targetChannelId = body.channelId;
         if (!targetChannelId) return sendJson(response, 400, { error: 'channelId is required.' });
+        if (queueMatch[1] === 'next' && url.pathname.startsWith('/admin/api/stage/')) {
+          const stage = stageStore.get(targetGuildId, targetChannelId);
+          if (!stage) return sendJson(response, 404, { error: 'No active stage found.' });
+          if (stage.currentSpeakerId && stage.currentSpeakerId !== stage.hostId) await setStageMute(targetGuildId, stage.currentSpeakerId, true);
+          const nextEntry = queueStore.next(targetGuildId, targetChannelId);
+          stageStore.setCurrentSpeaker(targetGuildId, targetChannelId, nextEntry?.userId ?? null);
+          if (nextEntry) {
+            const unmuted = await setStageMute(targetGuildId, nextEntry.userId, false);
+            memberStatsStore.recordParticipation(targetGuildId);
+            return sendJson(response, 200, { ok: true, result: { ...nextEntry, currentSpeaker: nextEntry.userId, unmuted } });
+          }
+          return sendJson(response, 200, { ok: true, result: null });
+        }
         if (queueMatch[1] === 'next') return sendJson(response, 200, { ok: true, result: queueStore.next(targetGuildId, targetChannelId) ?? null });
-        if (queueMatch[1] === 'clear') return sendJson(response, 200, { ok: true, result: { cleared: queueStore.clear(targetGuildId, targetChannelId) } });
+        if (queueMatch[1] === 'clear') {
+          if (url.pathname.startsWith('/admin/api/stage/')) {
+            const stage = stageStore.get(targetGuildId, targetChannelId);
+            if (!stage) return sendJson(response, 404, { error: 'No active stage found.' });
+            if (stage.currentSpeakerId && stage.currentSpeakerId !== stage.hostId) await setStageMute(targetGuildId, stage.currentSpeakerId, true);
+            stageStore.setCurrentSpeaker(targetGuildId, targetChannelId, null);
+          }
+          return sendJson(response, 200, { ok: true, result: { cleared: queueStore.clear(targetGuildId, targetChannelId) } });
+        }
+        if (url.pathname.startsWith('/admin/api/stage/')) {
+          const stage = stageStore.get(targetGuildId, targetChannelId);
+          if (!stage) return sendJson(response, 404, { error: 'No active stage found.' });
+          if (stage.currentSpeakerId === body.userId && stage.currentSpeakerId !== stage.hostId) {
+            await setStageMute(targetGuildId, stage.currentSpeakerId, true);
+            stageStore.setCurrentSpeaker(targetGuildId, targetChannelId, null);
+          }
+        }
         return sendJson(response, 200, { ok: true, result: { removed: queueStore.remove(targetGuildId, targetChannelId, body.userId ?? '') } });
-      }
-
-      if (url.pathname === '/admin/api/stage/join-toggle' && request.method === 'POST') {
-        const body = await readBody(request);
-        return sendJson(response, 200, { ok: true, result: { acceptingJoins: body.acceptingJoins !== 'false' } });
       }
 
       if (url.pathname === '/admin/api/stage/radio' && request.method === 'POST') {
@@ -400,6 +479,10 @@ async function handleStageCommand(interaction: ChatInputCommandInteraction): Pro
   }
 
   if (subcommand === 'join') {
+    if (!stage.acceptingJoins) {
+      await interaction.reply('This stage is not currently accepting new singers.');
+      return;
+    }
     if (interaction.user.id === stage.hostId || stage.coHostIds.includes(interaction.user.id)) {
       await interaction.reply('You are the stage host, so you can speak without joining the singer queue.');
       return;
