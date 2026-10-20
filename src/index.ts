@@ -424,6 +424,11 @@ async function handleStageCommand(interaction: ChatInputCommandInteraction): Pro
   const subcommand = interaction.options.getSubcommand();
 
   if (subcommand === 'start') {
+    if (!hasDefenderAuthority(interaction)) {
+      await interaction.reply('Only members with the Defender role or a higher role can assign stage hosts.');
+      return;
+    }
+
     if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageChannels)) {
       await interaction.reply('You need the Manage Channels permission to start a singing stage.');
       return;
