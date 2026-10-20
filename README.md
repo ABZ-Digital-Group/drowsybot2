@@ -10,7 +10,7 @@ DrowsyBot is a Discord bot for managing a singing queue.
 - `/next` - call the next singer and remove them from the queue
 - `/clear` - clear the queue
 - `/events` - show current and upcoming Discord scheduled events
-- `/stage start channel:<voice channel>` - start managing a normal voice channel as a singing stage; requires the `Defender` role or higher
+- `/stage start channel:<voice channel>` - start managing a normal voice channel as a singing stage; requires the `Drowsy Defender` role or higher
 - `/stage join` - join the stage queue while connected to the managed voice channel
 - `/stage leave` - leave the stage queue
 - `/stage queue` - show the stage queue
@@ -41,9 +41,9 @@ For development, use `npm run dev`.
 
 Queues currently live in memory and reset when the bot restarts. Each Discord channel has its own independent queue, so multiple singing sessions can run at the same time in different channels.
 
-Stage queues are attached to normal Discord voice channels and also live in memory. The member who starts the stage is its host: they remain unmuted, can speak at any time, and are not added to the singer queue. Starting a stage and assigning a host or co-host requires the `Defender` role or higher. The bot server-mutes other singers while they wait and attempts to unmute the singer selected by `/stage next`. Discord must allow the bot to moderate each member for mute changes, which requires the `Mute Members` permission and a sufficiently high bot role.
+Stage queues are attached to normal Discord voice channels and also live in memory. The member who starts the stage is its host: they remain unmuted, can speak at any time, and are not added to the singer queue. Starting a stage and assigning a host or co-host requires the `Drowsy Defender` role or higher. The bot server-mutes other singers while they wait and attempts to unmute the singer selected by `/stage next`. Discord must allow the bot to moderate each member for mute changes, which requires the `Mute Members` permission and a sufficiently high bot role.
 
-The `Defender` role is the minimum role allowed to assign a host or co-host. Higher roles are accepted using Discord's role hierarchy, and the server owner is also allowed.
+The `Drowsy Defender` role is the minimum role allowed to assign a host or co-host. Higher roles are accepted using Discord's role hierarchy, and the server owner is also allowed.
 
 The authenticated management API exposes active stage sessions through `GET /admin/api/state` and supports the stage controls used by the management website:
 
