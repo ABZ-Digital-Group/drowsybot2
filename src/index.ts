@@ -474,25 +474,25 @@ function canManageStage(interaction: ChatInputCommandInteraction, stage: { hostI
 }
 
 async function handleStageCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply();
   const subcommand = interaction.options.getSubcommand();
 
   if (subcommand === 'start') {
     if (!hasDefenderAuthority(interaction)) {
-      await interaction.reply('Only members with the Defender role or a higher role can assign stage hosts.');
+      await interaction.editReply('Only members with the Defender role or a higher role can assign stage hosts.');
       return;
     }
 
     if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageChannels)) {
-      await interaction.reply('You need the Manage Channels permission to start a singing stage.');
+      await interaction.editReply('You need the Manage Channels permission to start a singing stage.');
       return;
     }
 
     const channel = interaction.options.getChannel('channel', true);
     if (channel.type !== ChannelType.GuildVoice) {
-      await interaction.reply('Choose a normal voice channel.');
+      await interaction.editReply('Choose a normal voice channel.');
       return;
     }
-    await interaction.deferReply();
     const stage = stageStore.start(interaction.guildId!, channel.id, interaction.channelId, interaction.user.id);
     await applyStageMutePolicy(stage);
     await interaction.editReply(`Singing stage started in <#${channel.id}>. You are the host and can speak at any time. Use /stage join while connected to it.`);
@@ -501,46 +501,46 @@ async function handleStageCommand(interaction: ChatInputCommandInteraction): Pro
 
   const channel = await currentVoiceChannel(interaction);
   if (!channel) {
-    await interaction.reply('Join the managed voice channel before using this stage command.');
+    await interaction.editReply('Join the managed voice channel before using this stage command.');
     return;
   }
 
   const stage = stageStore.get(interaction.guildId!, channel.id);
   if (!stage) {
-    await interaction.reply(`There is no active singing stage in <#${channel.id}>.`);
+    await interaction.editReply(`There is no active singing stage in <#${channel.id}>.`);
     return;
   }
 
   if (subcommand === 'host' || subcommand === 'cohost' || subcommand === 'uncohost') {
     if (!hasDefenderAuthority(interaction)) {
-      await interaction.reply('Only members with the Defender role or a higher role can assign stage hosts.');
+      await interaction.editReply('Only members with the Defender role or a higher role can assign stage hosts.');
       return;
     }
     const user = interaction.options.getUser('user', true);
     if (subcommand === 'host') {
       stageStore.setHost(interaction.guildId!, channel.id, user.id);
-      await interaction.reply(`<@${user.id}> is now the stage host.`);
+      await interaction.editReply(`<@${user.id}> is now the stage host.`);
       return;
     }
     stageStore.setCoHost(interaction.guildId!, channel.id, user.id, subcommand === 'cohost');
-    await interaction.reply(subcommand === 'cohost'
+    await interaction.editReply(subcommand === 'cohost'
       ? `<@${user.id}> is now a stage co-host.`
       : `<@${user.id}> is no longer a stage co-host.`);
     return;
   }
 
   if ((subcommand === 'next' || subcommand === 'clear' || subcommand === 'stop') && !canManageStage(interaction, stage)) {
-    await interaction.reply('Only the host, co-hosts, or Defender+ staff can manage this stage.');
+    await interaction.editReply('Only the host, co-hosts, or Defender+ staff can manage this stage.');
     return;
   }
 
   if (subcommand === 'join') {
     if (!stage.acceptingJoins) {
-      await interaction.reply('This stage is not currently accepting new singers.');
+      await interaction.editReply('This stage is not currently accepting new singers.');
       return;
     }
     if (interaction.user.id === stage.hostId || stage.coHostIds.includes(interaction.user.id)) {
-      await interaction.reply('You are the stage host, so you can speak without joining the singer queue.');
+      await interaction.editReply('You are the stage host, so you can speak without joining the singer queue.');
       return;
     }
     const result = queueStore.add(interaction.guildId!, channel.id, {
@@ -551,7 +551,7 @@ async function handleStageCommand(interaction: ChatInputCommandInteraction): Pro
       await setStageMute(interaction.guildId!, interaction.user.id, true);
       memberStatsStore.recordRequest(interaction.guildId!);
     }
-    await interaction.reply(result.added
+    await interaction.editReply(result.added
       ? `You joined the stage queue at position ${result.position}.`
       : `You are already in the stage queue at position ${result.position}.`);
     return;
@@ -559,12 +559,12 @@ async function handleStageCommand(interaction: ChatInputCommandInteraction): Pro
 
   if (subcommand === 'leave') {
     const removed = queueStore.remove(interaction.guildId!, channel.id, interaction.user.id);
-    await interaction.reply(removed ? 'You left the stage queue.' : 'You are not currently in the stage queue.');
+    await interaction.editReply(removed ? 'You left the stage queue.' : 'You are not currently in the stage queue.');
     return;
   }
 
   if (subcommand === 'queue') {
-    await interaction.reply(stageQueuePanel(interaction.guildId!, channel.id));
+    await interaction.editReply(stageQueuePanel(interaction.guildId!, channel.id));
     return;
   }
 
@@ -573,26 +573,26 @@ async function handleStageCommand(interaction: ChatInputCommandInteraction): Pro
     const nextEntry = queueStore.next(interaction.guildId!, channel.id);
     if (!nextEntry) {
       stageStore.setCurrentSpeaker(interaction.guildId!, channel.id, null);
-      await interaction.reply('The stage queue is empty.');
+      await interaction.editReply('The stage queue is empty.');
       return;
     }
 
     stageStore.setCurrentSpeaker(interaction.guildId!, channel.id, nextEntry.userId);
     const unmuted = await setStageMute(interaction.guildId!, nextEntry.userId, false);
     memberStatsStore.recordParticipation(interaction.guildId!);
-    await interaction.reply(`Up next: <@${nextEntry.userId}>${unmuted ? '' : ' (I could not change their mute state.)'}`);
+    await interaction.editReply(`Up next: <@${nextEntry.userId}>${unmuted ? '' : ' (I could not change their mute state.)'}`);
     return;
   }
 
   if (subcommand === 'clear') {
-    await interaction.reply(`Cleared ${queueStore.clear(interaction.guildId!, channel.id)} singer(s) from the stage queue.`);
+    await interaction.editReply(`Cleared ${queueStore.clear(interaction.guildId!, channel.id)} singer(s) from the stage queue.`);
     return;
   }
 
   if (stage.currentSpeakerId && stage.currentSpeakerId !== stage.hostId) await setStageMute(interaction.guildId!, stage.currentSpeakerId, true);
   queueStore.clear(interaction.guildId!, channel.id);
   stageStore.stop(interaction.guildId!, channel.id);
-  await interaction.reply(`Singing stage stopped in <#${channel.id}>.`);
+  await interaction.editReply(`Singing stage stopped in <#${channel.id}>.`);
 }
 
 async function handleQueueButton(interaction: ButtonInteraction): Promise<void> {
