@@ -597,30 +597,31 @@ async function handleStageCommand(interaction: ChatInputCommandInteraction): Pro
 
 async function handleQueueButton(interaction: ButtonInteraction): Promise<void> {
   if (!interaction.guildId) return;
+  await interaction.deferUpdate();
   if (interaction.customId.startsWith('stage:')) {
     const [, action, stageChannelId] = interaction.customId.split(':');
     if (!stageChannelId) return;
     const stage = stageStore.get(interaction.guildId, stageChannelId);
     if (!stage) {
-      await interaction.reply({ content: 'This stage is no longer active.', ephemeral: true });
+      await interaction.editReply({ content: 'This stage is no longer active.', components: [] });
       return;
     }
     if (action === 'refresh') {
-      await interaction.update(stageQueuePanel(interaction.guildId, stageChannelId));
+      await interaction.editReply(stageQueuePanel(interaction.guildId, stageChannelId));
       return;
     }
     if (action === 'join') {
       if (!stage.acceptingJoins) {
-        await interaction.reply({ content: 'This stage is not currently accepting new singers.', ephemeral: true });
+        await interaction.editReply({ content: 'This stage is not currently accepting new singers.' });
         return;
       }
       const member = await interaction.guild?.members.fetch(interaction.user.id);
       if (member?.voice.channelId !== stageChannelId) {
-        await interaction.reply({ content: 'Join the stage voice channel before joining its queue.', ephemeral: true });
+        await interaction.editReply({ content: 'Join the stage voice channel before joining its queue.' });
         return;
       }
       if (interaction.user.id === stage.hostId || stage.coHostIds.includes(interaction.user.id)) {
-        await interaction.reply({ content: 'You are a stage host and can speak without joining the queue.', ephemeral: true });
+        await interaction.editReply({ content: 'You are a stage host and can speak without joining the queue.' });
         return;
       }
       const result = queueStore.add(interaction.guildId, stageChannelId, {
@@ -631,32 +632,32 @@ async function handleQueueButton(interaction: ButtonInteraction): Promise<void> 
         memberStatsStore.recordRequest(interaction.guildId);
         await setStageMute(interaction.guildId, interaction.user.id, true);
       }
-      await interaction.update(stageQueuePanel(interaction.guildId, stageChannelId));
+      await interaction.editReply(stageQueuePanel(interaction.guildId, stageChannelId));
       await interaction.followUp({ content: result.added ? `You joined the stage queue at position ${result.position}.` : `You are already in the stage queue at position ${result.position}.`, ephemeral: true });
       return;
     }
     const removed = queueStore.remove(interaction.guildId, stageChannelId, interaction.user.id);
     if (removed && action === 'done') memberStatsStore.recordParticipation(interaction.guildId);
-    await interaction.update(stageQueuePanel(interaction.guildId, stageChannelId));
+    await interaction.editReply(stageQueuePanel(interaction.guildId, stageChannelId));
     await interaction.followUp({ content: removed
       ? action === 'done' ? 'Nice work. Your turn is marked as complete.' : 'You left the stage queue.'
       : 'You are not currently in the stage queue.', ephemeral: true });
     return;
   }
   if (interaction.customId === 'queue:refresh') {
-    await interaction.update(queuePanel(interaction.guildId, interaction.channelId));
+    await interaction.editReply(queuePanel(interaction.guildId, interaction.channelId));
     return;
   }
   if (interaction.customId === 'queue:join') {
     const result = queueStore.add(interaction.guildId, interaction.channelId, { userId: interaction.user.id, displayName: interaction.user.displayName });
     if (result.added) memberStatsStore.recordRequest(interaction.guildId);
-    await interaction.update(queuePanel(interaction.guildId, interaction.channelId));
+    await interaction.editReply(queuePanel(interaction.guildId, interaction.channelId));
     await interaction.followUp({ content: result.added ? `You joined the queue at position ${result.position}.` : `You are already in the queue at position ${result.position}.`, ephemeral: true });
     return;
   }
   const removed = queueStore.remove(interaction.guildId, interaction.channelId, interaction.user.id);
   if (removed && interaction.customId === 'queue:done') memberStatsStore.recordParticipation(interaction.guildId);
-  await interaction.update(queuePanel(interaction.guildId, interaction.channelId));
+  await interaction.editReply(queuePanel(interaction.guildId, interaction.channelId));
   await interaction.followUp({ content: removed
     ? interaction.customId === 'queue:done' ? 'Nice work. Your turn is marked as complete.' : 'You left the singing queue.'
     : 'You are not currently in the singing queue.', ephemeral: true });
