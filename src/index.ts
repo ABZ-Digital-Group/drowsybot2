@@ -389,6 +389,34 @@ function queuePanel(guildId: string, channelId: string): { embeds: EmbedBuilder[
   return { embeds: [embed], components: [controls] };
 }
 
+function stageQueuePanel(
+  guildId: string,
+  channelId: string,
+): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
+  const stage = stageStore.get(guildId, channelId);
+  const queue = queueStore.get(guildId, channelId);
+  const description = queue.length === 0
+    ? 'No singers are waiting. Be the first to join!'
+    : queue.map((entry, index) => `**${index + 1}.** <@${entry.userId}>`).join('\n');
+  const embed = new EmbedBuilder()
+    .setColor(0x7c5cff)
+    .setTitle('Stage Queue')
+    .setDescription(description)
+    .addFields(
+      { name: 'Singers waiting', value: `${queue.length}`, inline: true },
+      { name: 'Current speaker', value: stage?.currentSpeakerId ? `<@${stage.currentSpeakerId}>` : 'Nobody', inline: true },
+    )
+    .setFooter({ text: 'Use the buttons below to manage your place.' })
+    .setTimestamp();
+  const controls = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`stage:join:${channelId}`).setLabel('Join queue').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`stage:leave:${channelId}`).setLabel('Leave queue').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`stage:done:${channelId}`).setLabel('Done').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`stage:refresh:${channelId}`).setLabel('Refresh').setStyle(ButtonStyle.Secondary),
+  );
+  return { embeds: [embed], components: [controls] };
+}
+
 async function currentVoiceChannel(interaction: ChatInputCommandInteraction) {
   const member = await interaction.guild!.members.fetch(interaction.user.id);
   return member.voice.channel?.type === ChannelType.GuildVoice ? member.voice.channel : null;
@@ -535,8 +563,7 @@ async function handleStageCommand(interaction: ChatInputCommandInteraction): Pro
   }
 
   if (subcommand === 'queue') {
-    const queue = queueStore.get(interaction.guildId!, channel.id);
-    await interaction.reply(queue.length ? queue.map((entry, index) => `${index + 1}. <@${entry.userId}>`).join('\n') : 'The stage queue is empty.');
+    await interaction.reply(stageQueuePanel(interaction.guildId!, channel.id));
     return;
   }
 
@@ -569,6 +596,52 @@ async function handleStageCommand(interaction: ChatInputCommandInteraction): Pro
 
 async function handleQueueButton(interaction: ButtonInteraction): Promise<void> {
   if (!interaction.guildId) return;
+  if (interaction.customId.startsWith('stage:')) {
+    const [, action, stageChannelId] = interaction.customId.split(':');
+    if (!stageChannelId) return;
+    const stage = stageStore.get(interaction.guildId, stageChannelId);
+    if (!stage) {
+      await interaction.reply({ content: 'This stage is no longer active.', ephemeral: true });
+      return;
+    }
+    if (action === 'refresh') {
+      await interaction.update(stageQueuePanel(interaction.guildId, stageChannelId));
+      return;
+    }
+    if (action === 'join') {
+      if (!stage.acceptingJoins) {
+        await interaction.reply({ content: 'This stage is not currently accepting new singers.', ephemeral: true });
+        return;
+      }
+      const member = await interaction.guild?.members.fetch(interaction.user.id);
+      if (member?.voice.channelId !== stageChannelId) {
+        await interaction.reply({ content: 'Join the stage voice channel before joining its queue.', ephemeral: true });
+        return;
+      }
+      if (interaction.user.id === stage.hostId || stage.coHostIds.includes(interaction.user.id)) {
+        await interaction.reply({ content: 'You are a stage host and can speak without joining the queue.', ephemeral: true });
+        return;
+      }
+      const result = queueStore.add(interaction.guildId, stageChannelId, {
+        userId: interaction.user.id,
+        displayName: interaction.user.displayName,
+      });
+      if (result.added) {
+        memberStatsStore.recordRequest(interaction.guildId);
+        await setStageMute(interaction.guildId, interaction.user.id, true);
+      }
+      await interaction.update(stageQueuePanel(interaction.guildId, stageChannelId));
+      await interaction.followUp({ content: result.added ? `You joined the stage queue at position ${result.position}.` : `You are already in the stage queue at position ${result.position}.`, ephemeral: true });
+      return;
+    }
+    const removed = queueStore.remove(interaction.guildId, stageChannelId, interaction.user.id);
+    if (removed && action === 'done') memberStatsStore.recordParticipation(interaction.guildId);
+    await interaction.update(stageQueuePanel(interaction.guildId, stageChannelId));
+    await interaction.followUp({ content: removed
+      ? action === 'done' ? 'Nice work. Your turn is marked as complete.' : 'You left the stage queue.'
+      : 'You are not currently in the stage queue.', ephemeral: true });
+    return;
+  }
   if (interaction.customId === 'queue:refresh') {
     await interaction.update(queuePanel(interaction.guildId, interaction.channelId));
     return;
@@ -612,9 +685,18 @@ client.once('ready', (readyClient) => {
 
 client.on('guildMemberAdd', (member) => memberStatsStore.recordJoined(member.guild.id));
 client.on('guildMemberRemove', (member) => memberStatsStore.recordLeft(member.guild.id));
-client.on('voiceStateUpdate', (oldState, newState) => {
+client.on('voiceStateUpdate', async (oldState, newState) => {
   if (!oldState.channelId && newState.channelId && !newState.member?.user.bot) memberStatsStore.recordVoiceJoin(newState.guild.id, newState.id);
   if (oldState.channelId && !newState.channelId && !oldState.member?.user.bot) memberStatsStore.recordVoiceLeave(oldState.guild.id, oldState.id);
+
+  if (!newState.channelId || newState.member?.user.bot) return;
+  const stage = stageStore.get(newState.guild.id, newState.channelId);
+  if (!stage) return;
+
+  const canSpeak = newState.id === stage.hostId
+    || stage.coHostIds.includes(newState.id)
+    || newState.id === stage.currentSpeakerId;
+  await setStageMute(newState.guild.id, newState.id, !canSpeak);
 });
 
 client.on('messageCreate', async (message) => {
