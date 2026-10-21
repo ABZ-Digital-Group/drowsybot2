@@ -492,9 +492,10 @@ async function handleStageCommand(interaction: ChatInputCommandInteraction): Pro
       await interaction.reply('Choose a normal voice channel.');
       return;
     }
+    await interaction.deferReply();
     const stage = stageStore.start(interaction.guildId!, channel.id, interaction.channelId, interaction.user.id);
     await applyStageMutePolicy(stage);
-    await interaction.reply(`Singing stage started in <#${channel.id}>. You are the host and can speak at any time. Use /stage join while connected to it.`);
+    await interaction.editReply(`Singing stage started in <#${channel.id}>. You are the host and can speak at any time. Use /stage join while connected to it.`);
     return;
   }
 
