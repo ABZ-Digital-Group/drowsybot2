@@ -399,6 +399,15 @@ async function setStageMute(guildId: string, userId: string, mute: boolean): Pro
   if (!guild) return false;
   const member = await guild.members.fetch(userId).catch(() => null);
   if (!member?.voice.channel || member.user.bot) return false;
+  const botMember = guild.members.me;
+  if (!botMember?.permissions.has(PermissionFlagsBits.MuteMembers)) {
+    console.warn(`Could not ${mute ? 'mute' : 'unmute'} stage member ${userId}: the bot is missing the Mute Members permission.`);
+    return false;
+  }
+  if (!member.manageable) {
+    console.warn(`Could not ${mute ? 'mute' : 'unmute'} stage member ${userId}: the bot's highest role must be above the member's highest role.`);
+    return false;
+  }
   try {
     await member.voice.setMute(mute, mute ? 'Another singer was called.' : 'Singer called to the stage.');
     return true;
