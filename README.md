@@ -41,7 +41,7 @@ For development, use `npm run dev`.
 
 Queues currently live in memory and reset when the bot restarts. Each Discord channel has its own independent queue, so multiple singing sessions can run at the same time in different channels.
 
-Stage queues are attached to normal Discord voice channels and also live in memory. The member who starts the stage is its host: they remain unmuted, can speak at any time, and are not added to the singer queue. Starting a stage and assigning a host or co-host requires the `Drowsy Defender` role or higher. The bot server-mutes other singers while they wait and attempts to unmute the singer selected by `/stage next`. Discord must allow the bot to moderate each member for mute changes, which requires the `Mute Members` permission and a sufficiently high bot role.
+Stage queues are attached to normal Discord voice channels and also live in memory. The member who starts the stage is its host: they can control their own mute state, can speak at any time, and are not added to the singer queue. Co-hosts also control their own mute state and are not added to the singer queue. Starting a stage and assigning a host or co-host requires the `Drowsy Defender` role or higher. The bot server-mutes other singers while they wait and attempts to unmute the singer selected by `/stage next`. Discord must allow the bot to moderate each queued member for mute changes, which requires the `Mute Members` permission and a sufficiently high bot role.
 
 The `Drowsy Defender` role is the minimum role allowed to assign a host or co-host. Higher roles are accepted using Discord's role hierarchy, and the server owner is also allowed.
 

@@ -235,7 +235,6 @@ async function startAdminApi(): Promise<void> {
           return sendJson(response, 400, { error: 'channelId must identify a voice channel in the requested guild.' });
         }
         const stage = stageStore.start(targetGuildId, channel.id, body.announcementChannelId || channel.id, body.hostId);
-        await setStageMute(targetGuildId, body.hostId, false);
         return sendJson(response, 200, { ok: true, stage });
       }
 
@@ -269,10 +268,8 @@ async function startAdminApi(): Promise<void> {
         if (!stage) return sendJson(response, 404, { error: 'No active stage found.' });
         if (stageRoleMatch[1] === 'host') {
           stageStore.setHost(targetGuildId, body.channelId, body.userId);
-          await setStageMute(targetGuildId, body.userId, false);
         } else {
           stageStore.setCoHost(targetGuildId, body.channelId, body.userId, stageRoleMatch[1] === 'cohost');
-          if (stageRoleMatch[1] === 'cohost') await setStageMute(targetGuildId, body.userId, false);
         }
         return sendJson(response, 200, { ok: true, stage: stageStore.get(targetGuildId, body.channelId) });
       }
@@ -443,9 +440,8 @@ async function handleStageCommand(interaction: ChatInputCommandInteraction): Pro
       await interaction.reply('Choose a normal voice channel.');
       return;
     }
-
     stageStore.start(interaction.guildId!, channel.id, interaction.channelId, interaction.user.id);
-    await setStageMute(interaction.guildId!, interaction.user.id, false);
+    stageStore.start(interaction.guildId!, channel.id, interaction.channelId, interaction.user.id);
     await interaction.reply(`Singing stage started in <#${channel.id}>. You are the host and can speak at any time. Use /stage join while connected to it.`);
     return;
   }
@@ -470,12 +466,10 @@ async function handleStageCommand(interaction: ChatInputCommandInteraction): Pro
     const user = interaction.options.getUser('user', true);
     if (subcommand === 'host') {
       stageStore.setHost(interaction.guildId!, channel.id, user.id);
-      await setStageMute(interaction.guildId!, user.id, false);
       await interaction.reply(`<@${user.id}> is now the stage host.`);
       return;
     }
     stageStore.setCoHost(interaction.guildId!, channel.id, user.id, subcommand === 'cohost');
-    await setStageMute(interaction.guildId!, user.id, false);
     await interaction.reply(subcommand === 'cohost'
       ? `<@${user.id}> is now a stage co-host.`
       : `<@${user.id}> is no longer a stage co-host.`);
