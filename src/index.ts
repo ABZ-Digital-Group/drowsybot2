@@ -80,6 +80,7 @@ const commands = [
 const queueStore = new QueueStore();
 const stageStore = new StageStore();
 const memberStatsStore = new MemberStatsStore();
+const stageMuteOperations = new Map<string, Promise<void>>();
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -423,6 +424,22 @@ async function currentVoiceChannel(interaction: ChatInputCommandInteraction) {
 }
 
 async function setStageMute(guildId: string, userId: string, mute: boolean): Promise<boolean> {
+  const operationKey = `${guildId}:${userId}`;
+  const previousOperation = stageMuteOperations.get(operationKey) ?? Promise.resolve();
+  const operation = previousOperation.then(() => performStageMute(guildId, userId, mute));
+  const completion = operation.then(() => undefined, () => undefined);
+  stageMuteOperations.set(operationKey, completion);
+
+  try {
+    return await operation;
+  } finally {
+    if (stageMuteOperations.get(operationKey) === completion) {
+      stageMuteOperations.delete(operationKey);
+    }
+  }
+}
+
+async function performStageMute(guildId: string, userId: string, mute: boolean): Promise<boolean> {
   const guild = client.guilds.cache.get(guildId);
   if (!guild) return false;
   const member = await guild.members.fetch(userId).catch(() => null);
