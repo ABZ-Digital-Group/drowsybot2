@@ -19,7 +19,7 @@ import {
 } from 'discord.js';
 import { QueueStore } from './queue.js';
 import { MemberStatsStore } from './member-stats.js';
-import { StageStore } from './stage.js';
+import { StageStore, type StageSession } from './stage.js';
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
@@ -235,6 +235,7 @@ async function startAdminApi(): Promise<void> {
           return sendJson(response, 400, { error: 'channelId must identify a voice channel in the requested guild.' });
         }
         const stage = stageStore.start(targetGuildId, channel.id, body.announcementChannelId || channel.id, body.hostId);
+        await applyStageMutePolicy(stage);
         return sendJson(response, 200, { ok: true, stage });
       }
 
@@ -407,6 +408,20 @@ async function setStageMute(guildId: string, userId: string, mute: boolean): Pro
   }
 }
 
+async function applyStageMutePolicy(stage: StageSession): Promise<void> {
+  const guild = client.guilds.cache.get(stage.guildId);
+  const channel = guild?.channels.cache.get(stage.voiceChannelId);
+  if (!guild || !channel || channel.type !== ChannelType.GuildVoice) return;
+
+  await Promise.all([...channel.members.values()]
+    .filter((member) => !member.user.bot)
+    .map((member) => setStageMute(
+      stage.guildId,
+      member.id,
+      member.id !== stage.hostId && !stage.coHostIds.includes(member.id),
+    )));
+}
+
 function hasDefenderAuthority(interaction: ChatInputCommandInteraction): boolean {
   if (interaction.guild?.ownerId === interaction.user.id) return true;
   const member = interaction.guild?.members.cache.get(interaction.user.id);
@@ -440,8 +455,8 @@ async function handleStageCommand(interaction: ChatInputCommandInteraction): Pro
       await interaction.reply('Choose a normal voice channel.');
       return;
     }
-    stageStore.start(interaction.guildId!, channel.id, interaction.channelId, interaction.user.id);
-    stageStore.start(interaction.guildId!, channel.id, interaction.channelId, interaction.user.id);
+    const stage = stageStore.start(interaction.guildId!, channel.id, interaction.channelId, interaction.user.id);
+    await applyStageMutePolicy(stage);
     await interaction.reply(`Singing stage started in <#${channel.id}>. You are the host and can speak at any time. Use /stage join while connected to it.`);
     return;
   }
