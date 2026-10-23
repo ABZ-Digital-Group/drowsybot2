@@ -26,6 +26,7 @@ const clientId = process.env.DISCORD_CLIENT_ID;
 const guildId = process.env.DISCORD_GUILD_ID;
 const botApiSecret = process.env.BOT_API_SECRET;
 const botApiPort = Number(process.env.BOT_API_PORT) || 8080;
+const enablePresenceIntent = process.env.ENABLE_PRESENCE_INTENT === 'true';
 const allowedLinkUserIds = new Set(
   (process.env.LINK_ALLOWED_USER_IDS ?? '')
     .split(',')
@@ -81,16 +82,17 @@ const queueStore = new QueueStore();
 const stageStore = new StageStore();
 const memberStatsStore = new MemberStatsStore();
 const stageMuteOperations = new Map<string, Promise<void>>();
+const intents = [
+  GatewayIntentBits.Guilds,
+  GatewayIntentBits.GuildMembers,
+  GatewayIntentBits.GuildVoiceStates,
+  GatewayIntentBits.GuildMessages,
+  GatewayIntentBits.GuildScheduledEvents,
+  GatewayIntentBits.MessageContent,
+];
+if (enablePresenceIntent) intents.push(GatewayIntentBits.GuildPresences);
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildVoiceStates,
-    GatewayIntentBits.GuildPresences,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildScheduledEvents,
-    GatewayIntentBits.MessageContent,
-  ],
+  intents,
   partials: [Partials.GuildMember],
 });
 const voiceJoinTimes = new Map<string, number>();
@@ -154,16 +156,18 @@ async function startAdminApi(): Promise<void> {
               };
             });
 
-          const presenceMembers = [...guild.presences.cache.values()]
-            .filter((presence) => !presence.member?.user.bot && !voiceMembers.some((member) => member.userId === presence.userId))
-            .map((presence) => ({
-              userId: presence.userId,
-              guildId: guild.id,
-              status: presence.status,
-              voiceChannelId: null,
-              voiceChannelName: null,
-              voiceJoinedAt: null,
-            }));
+          const presenceMembers = enablePresenceIntent
+            ? [...guild.presences.cache.values()]
+              .filter((presence) => !presence.member?.user.bot && !voiceMembers.some((member) => member.userId === presence.userId))
+              .map((presence) => ({
+                userId: presence.userId,
+                guildId: guild.id,
+                status: presence.status,
+                voiceChannelId: null,
+                voiceChannelName: null,
+                voiceJoinedAt: null,
+              }))
+            : [];
 
           return [...voiceMembers, ...presenceMembers];
         });
