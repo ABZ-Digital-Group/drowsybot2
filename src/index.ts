@@ -85,13 +85,19 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
-      GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildPresences,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildScheduledEvents,
     GatewayIntentBits.MessageContent,
   ],
   partials: [Partials.GuildMember],
 });
+const voiceJoinTimes = new Map<string, number>();
+
+function voiceSessionKey(guildId: string, userId: string): string {
+  return `${guildId}:${userId}`;
+}
 
 function containsDiscordInvite(message: Message): boolean {
   return /(?:https?:\/\/)?(?:www\.)?(?:discord\.gg|discord(?:app)?\.com\/invite)\/[^\s]+/i.test(message.content);
@@ -129,6 +135,38 @@ async function startAdminApi(): Promise<void> {
 
     try {
       if (url.pathname === '/admin/api/state' && request.method === 'GET') {
+        const discordMembers = [...client.guilds.cache.values()].flatMap((guild) => {
+          const voiceMembers = [...guild.channels.cache
+            .filter((channel) => channel.isVoiceBased())
+            .values()]
+            .flatMap((channel) => [...channel.members.values()])
+            .filter((member) => !member.user.bot)
+            .map((member) => {
+              const key = voiceSessionKey(guild.id, member.id);
+              if (!voiceJoinTimes.has(key)) voiceJoinTimes.set(key, Date.now());
+              return {
+                userId: member.id,
+                guildId: guild.id,
+                status: guild.presences.cache.get(member.id)?.status || 'offline',
+                voiceChannelId: member.voice.channelId,
+                voiceChannelName: member.voice.channel?.name || null,
+                voiceJoinedAt: new Date(voiceJoinTimes.get(key)!).toISOString(),
+              };
+            });
+
+          const presenceMembers = [...guild.presences.cache.values()]
+            .filter((presence) => !presence.member?.user.bot && !voiceMembers.some((member) => member.userId === presence.userId))
+            .map((presence) => ({
+              userId: presence.userId,
+              guildId: guild.id,
+              status: presence.status,
+              voiceChannelId: null,
+              voiceChannelName: null,
+              voiceJoinedAt: null,
+            }));
+
+          return [...voiceMembers, ...presenceMembers];
+        });
         const queues = queueStore.getQueueIds().map(({ guildId: queueGuildId, channelId }) => ({
           guildId: queueGuildId,
           channelId,
@@ -198,6 +236,7 @@ async function startAdminApi(): Promise<void> {
           })),
           queues,
           trackedStages,
+          discordMembers,
           allowedInviteUsers,
           allowedInviteUserIds: [...allowedLinkUserIds],
           uptimeSeconds: process.uptime(),
@@ -705,6 +744,12 @@ client.once('ready', (readyClient) => {
 client.on('guildMemberAdd', (member) => memberStatsStore.recordJoined(member.guild.id));
 client.on('guildMemberRemove', (member) => memberStatsStore.recordLeft(member.guild.id));
 client.on('voiceStateUpdate', async (oldState, newState) => {
+  const key = voiceSessionKey(newState.guild.id, newState.id);
+  if (!oldState.channelId && newState.channelId && !newState.member?.user.bot) {
+    voiceJoinTimes.set(key, Date.now());
+  } else if (oldState.channelId && !newState.channelId) {
+    voiceJoinTimes.delete(key);
+  }
   if (!oldState.channelId && newState.channelId && !newState.member?.user.bot) memberStatsStore.recordVoiceJoin(newState.guild.id, newState.id);
   if (oldState.channelId && !newState.channelId && !oldState.member?.user.bot) memberStatsStore.recordVoiceLeave(oldState.guild.id, oldState.id);
 
