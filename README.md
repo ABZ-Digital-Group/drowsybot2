@@ -61,3 +61,5 @@ Discord invite links such as `discord.gg/...`, `discord.com/invite/...`, and `di
 The management API listens on `BOT_API_PORT` and must be protected by a firewall or reverse proxy so only `https://manage.drowsyvocals.com/` can reach it. Do not expose `BOT_API_SECRET` to browser code.
 
 Member activity is persisted in `data/member-stats.json` (or the path set by `MEMBER_STATS_FILE`). The management website can request `GET /admin/api/stats` with the bot API secret and optionally a `guildId`; the response includes member count, joins, leaves, unique voice visitors, average voice time, return visitors, queue requests, and participations. Daily metrics begin when the bot starts receiving events and do not include activity that happened before installation.
+
+Completed voice sessions are also stored in the member-stats file and can be delivered to the management website by setting `ACTIVITY_API_URL`. The bot posts batches to `/api/internal/voice-sessions` using `ACTIVITY_API_SECRET` (or `BOT_API_SECRET` when the former is empty). Voice sessions exclude the guild AFK channel, split when a member changes channels, and ignore sessions shorter than one minute.

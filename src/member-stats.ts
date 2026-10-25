@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 export interface MemberActivityStats {
   joined: number;
@@ -12,6 +13,19 @@ export interface MemberActivityStats {
   participations: number;
 }
 
+export interface VoiceActivitySession {
+  sessionId: string;
+  guildId: string;
+  guildName: string;
+  userId: string;
+  userName: string;
+  channelId: string;
+  channelName: string;
+  startedAt: string;
+  endedAt: string;
+  durationSeconds: number;
+}
+
 interface DailyStats {
   visitors: string[];
   voiceMinutes: number;
@@ -22,6 +36,7 @@ interface DailyStats {
 interface StoredStats {
   guilds: Record<string, MemberActivityStats>;
   daily?: Record<string, DailyStats>;
+  sessions?: VoiceActivitySession[];
 }
 
 const emptyStats = (): MemberActivityStats => ({ joined: 0, left: 0, lastUpdatedAt: null, uniqueVoiceVisitors: 0, averageVoiceMinutes: 0, returnVisitors: 0, requests: 0, participations: 0 });
@@ -29,7 +44,17 @@ const emptyStats = (): MemberActivityStats => ({ joined: 0, left: 0, lastUpdated
 export class MemberStatsStore {
   private readonly stats = new Map<string, MemberActivityStats>();
   private readonly daily = new Map<string, DailyStats>();
-  private readonly voiceSessions = new Map<string, number>();
+  private readonly voiceSessions = new Map<string, {
+    sessionId: string;
+    guildId: string;
+    guildName: string;
+    userId: string;
+    userName: string;
+    channelId: string;
+    channelName: string;
+    startedAt: string;
+  }>();
+  private readonly sessions: VoiceActivitySession[] = [];
   private loaded = false;
 
   constructor(private readonly filePath = process.env.MEMBER_STATS_FILE ?? 'data/member-stats.json') {}
@@ -43,6 +68,7 @@ export class MemberStatsStore {
       for (const [key, stats] of Object.entries(stored.daily ?? {})) {
         this.daily.set(key, stats);
       }
+      this.sessions.push(...(stored.sessions ?? []));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         console.warn('Could not load member activity stats:', error);
@@ -56,6 +82,10 @@ export class MemberStatsStore {
     return { ...stats };
   }
 
+  getVoiceSessions(): VoiceActivitySession[] {
+    return this.sessions.map((session) => ({ ...session }));
+  }
+
   recordJoined(guildId: string): void {
     this.record(guildId, 'joined');
   }
@@ -64,21 +94,42 @@ export class MemberStatsStore {
     this.record(guildId, 'left');
   }
 
-  recordVoiceJoin(guildId: string, userId: string): void {
+  recordVoiceJoin(guildId: string, guildName: string, userId: string, channelId: string, channelName: string, userName: string, startedAt = new Date().toISOString()): void {
     if (!this.loaded) return;
     const key = `${guildId}:${userId}`;
-    if (!this.voiceSessions.has(key)) this.voiceSessions.set(key, Date.now());
+    if (!this.voiceSessions.has(key)) {
+      this.voiceSessions.set(key, {
+        sessionId: randomUUID(),
+        guildId,
+        guildName,
+        userId,
+        userName,
+        channelId,
+        channelName,
+        startedAt,
+      });
+    }
     const day = this.getDaily(guildId);
     if (!day.visitors.includes(userId)) day.visitors.push(userId);
     this.refresh(guildId);
   }
 
-  recordVoiceLeave(guildId: string, userId: string): void {
-    const startedAt = this.voiceSessions.get(`${guildId}:${userId}`);
-    if (startedAt === undefined) return;
+  recordVoiceLeave(guildId: string, userId: string, endedAt = new Date().toISOString()): VoiceActivitySession | null {
+    const activeSession = this.voiceSessions.get(`${guildId}:${userId}`);
+    if (!activeSession) return null;
     this.voiceSessions.delete(`${guildId}:${userId}`);
-    this.getDaily(guildId).voiceMinutes += Math.max(0, (Date.now() - startedAt) / 60000);
+    const durationSeconds = Math.max(0, (Date.parse(endedAt) - Date.parse(activeSession.startedAt)) / 1000);
+    if (durationSeconds < 60) return null;
+
+    const session: VoiceActivitySession = {
+      ...activeSession,
+      endedAt,
+      durationSeconds: Math.round(durationSeconds),
+    };
+    this.sessions.push(session);
+    this.getDaily(guildId).voiceMinutes += durationSeconds / 60;
     this.refresh(guildId);
+    return session;
   }
 
   recordRequest(guildId: string): void {
@@ -128,7 +179,11 @@ export class MemberStatsStore {
   private async save(): Promise<void> {
     try {
       await mkdir(dirname(this.filePath), { recursive: true });
-      await writeFile(this.filePath, JSON.stringify({ guilds: Object.fromEntries(this.stats), daily: Object.fromEntries(this.daily) }, null, 2));
+        await writeFile(this.filePath, JSON.stringify({
+          guilds: Object.fromEntries(this.stats),
+          daily: Object.fromEntries(this.daily),
+          sessions: this.sessions,
+        }, null, 2));
     } catch (error) {
       console.error('Could not save member activity stats:', error);
     }

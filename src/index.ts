@@ -18,7 +18,7 @@ import {
   type Message,
 } from 'discord.js';
 import { QueueStore } from './queue.js';
-import { MemberStatsStore } from './member-stats.js';
+import { MemberStatsStore, type VoiceActivitySession } from './member-stats.js';
 import { StageStore, type StageSession } from './stage.js';
 
 const token = process.env.DISCORD_TOKEN;
@@ -26,6 +26,8 @@ const clientId = process.env.DISCORD_CLIENT_ID;
 const guildId = process.env.DISCORD_GUILD_ID;
 const botApiSecret = process.env.BOT_API_SECRET;
 const botApiPort = Number(process.env.BOT_API_PORT) || 8080;
+const activityApiUrl = (process.env.ACTIVITY_API_URL ?? '').trim().replace(/\/+$/, '');
+const activityApiSecret = process.env.ACTIVITY_API_SECRET || botApiSecret;
 const enablePresenceIntent = process.env.ENABLE_PRESENCE_INTENT === 'true';
 const allowedLinkUserIds = new Set(
   (process.env.LINK_ALLOWED_USER_IDS ?? '')
@@ -114,6 +116,45 @@ async function readBody(request: IncomingMessage): Promise<Record<string, string
   let body = '';
   for await (const chunk of request) body += chunk;
   return Object.fromEntries(new URLSearchParams(body));
+}
+
+async function pushVoiceSessions(sessions: VoiceActivitySession[]): Promise<void> {
+  if (!sessions.length || !activityApiUrl || !activityApiSecret) return;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(`${activityApiUrl}/api/internal/voice-sessions`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${activityApiSecret}`,
+        },
+        body: JSON.stringify({ sessions }),
+      });
+
+      if (response.ok) return;
+      const detail = (await response.text()).slice(0, 300);
+      if (response.status < 500 || attempt === 3) {
+        console.error(`Voice activity delivery failed with HTTP ${response.status}: ${detail}`);
+        return;
+      }
+    } catch (error) {
+      if (attempt === 3) {
+        console.error('Voice activity delivery failed:', error);
+        return;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 2 ** (attempt - 1) * 1000));
+  }
+}
+
+async function syncStoredVoiceSessions(): Promise<void> {
+  const sessions = memberStatsStore.getVoiceSessions();
+  for (let index = 0; index < sessions.length; index += 100) {
+    await pushVoiceSessions(sessions.slice(index, index + 100));
+  }
 }
 
 function isAuthorized(request: IncomingMessage): boolean {
@@ -743,19 +784,53 @@ async function formatEvents(interaction: ChatInputCommandInteraction): Promise<s
 
 client.once('ready', (readyClient) => {
   console.log(`DrowsyBot is online as ${readyClient.user.tag}`);
+  for (const guild of readyClient.guilds.cache.values()) {
+    for (const channel of guild.channels.cache.values()) {
+      if (!channel.isVoiceBased() || channel.id === guild.afkChannelId) continue;
+      for (const member of channel.members.values()) {
+        if (member.user.bot) continue;
+        const key = voiceSessionKey(guild.id, member.id);
+        voiceJoinTimes.set(key, Date.now());
+        memberStatsStore.recordVoiceJoin(
+          guild.id,
+          guild.name,
+          member.id,
+          channel.id,
+          channel.name,
+          member.displayName,
+        );
+      }
+    }
+  }
 });
 
 client.on('guildMemberAdd', (member) => memberStatsStore.recordJoined(member.guild.id));
 client.on('guildMemberRemove', (member) => memberStatsStore.recordLeft(member.guild.id));
 client.on('voiceStateUpdate', async (oldState, newState) => {
   const key = voiceSessionKey(newState.guild.id, newState.id);
+  const isBot = Boolean(newState.member?.user.bot || oldState.member?.user.bot);
+  const channelChanged = oldState.channelId !== newState.channelId;
   if (!oldState.channelId && newState.channelId && !newState.member?.user.bot) {
     voiceJoinTimes.set(key, Date.now());
   } else if (oldState.channelId && !newState.channelId) {
     voiceJoinTimes.delete(key);
   }
-  if (!oldState.channelId && newState.channelId && !newState.member?.user.bot) memberStatsStore.recordVoiceJoin(newState.guild.id, newState.id);
-  if (oldState.channelId && !newState.channelId && !oldState.member?.user.bot) memberStatsStore.recordVoiceLeave(oldState.guild.id, oldState.id);
+  if (!isBot && channelChanged) {
+    if (oldState.channelId) {
+      const session = memberStatsStore.recordVoiceLeave(oldState.guild.id, oldState.id);
+      if (session) void pushVoiceSessions([session]);
+    }
+    if (newState.channelId && newState.channelId !== newState.guild.afkChannelId) {
+      memberStatsStore.recordVoiceJoin(
+        newState.guild.id,
+        newState.guild.name,
+        newState.id,
+        newState.channelId,
+        newState.channel?.name || 'Unknown channel',
+        newState.member?.displayName || newState.member?.user.username || newState.id,
+      );
+    }
+  }
 
   if (!newState.channelId || newState.member?.user.bot) return;
   const stage = stageStore.get(newState.guild.id, newState.channelId);
@@ -858,3 +933,4 @@ await memberStatsStore.load();
 await startAdminApi();
 await registerCommands();
 await client.login(config.token);
+void syncStoredVoiceSessions();
