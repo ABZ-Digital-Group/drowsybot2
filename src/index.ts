@@ -276,6 +276,7 @@ async function startAdminApi(): Promise<void> {
           guilds: client.guilds.cache.map((guild) => ({
             id: guild.id,
             name: guild.name,
+            afkChannelId: guild.afkChannelId,
             textChannels: guild.channels.cache.filter((channel) => channel.isTextBased()).map((channel) => ({ id: channel.id, name: channel.name })),
             voiceChannels: guild.channels.cache.filter((channel) => channel.type === ChannelType.GuildVoice).map((channel) => ({ id: channel.id, name: channel.name })),
           })),
