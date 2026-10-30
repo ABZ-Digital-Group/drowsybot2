@@ -28,7 +28,7 @@ DrowsyBot is a Discord bot for managing a singing queue.
 3. Copy `.env.example` to `.env` and fill in the bot token, application client ID, and server ID.
 4. Add approved user IDs to `LINK_ALLOWED_USER_IDS`, separated by commas. Leave it empty to block Discord invite links from everyone except bots.
 5. Enable the `Message Content Intent` and `Server Members Intent` under **Bot > Privileged Gateway Intents** in the Discord Developer Portal. The Server Members Intent is required to receive join and leave events.
-6. Optional: if you want the management API to include non-voice users' live online status, also enable `Presence Intent` in the portal and set `ENABLE_PRESENCE_INTENT=true` in `.env`. Leave it unset or `false` if Presence Intent is not enabled.
+6. Optional: if you want game activity, presence history, and non-voice users' live online status, also enable `Presence Intent` in the portal and set `ENABLE_PRESENCE_INTENT=true` in `.env`. Leave it unset or `false` if Presence Intent is not enabled.
 7. Set `BOT_API_SECRET` to a long random value. Configure the website's `BOT_API_URL` to the bot server's HTTPS API URL and use the same secret as `BOT_API_SECRET` on the website.
 8. Give the bot `Manage Messages`, `Send Messages`, `Manage Channels`, and `Mute Members` permissions, then install dependencies and build the bot:
 
@@ -61,5 +61,7 @@ Discord invite links such as `discord.gg/...`, `discord.com/invite/...`, and `di
 The management API listens on `BOT_API_PORT` and must be protected by a firewall or reverse proxy so only `https://manage.drowsyvocals.com/` can reach it. Do not expose `BOT_API_SECRET` to browser code.
 
 Member activity is persisted in `data/member-stats.json` (or the path set by `MEMBER_STATS_FILE`). The management website can request `GET /admin/api/stats` with the bot API secret and optionally a `guildId`; the response includes member count, joins, leaves, unique voice visitors, average voice time, return visitors, queue requests, and participations. Daily metrics begin when the bot starts receiving events and do not include activity that happened before installation.
+
+The authenticated management API also exposes `GET /admin/api/analytics?days=14` with optional `guildId`. It returns privacy-preserving daily aggregates for messages, reactions, voice minutes, active members, joins, leaves, queue requests, participations, presence updates, and game activity. Message content is never persisted.
 
 Completed voice sessions are also stored in the member-stats file and can be delivered to the management website by setting `ACTIVITY_API_URL`. The bot posts batches to `/api/internal/voice-sessions` using `ACTIVITY_API_SECRET` (or `BOT_API_SECRET` when the former is empty). Voice sessions exclude the guild AFK channel, split when a member changes channels, and ignore sessions shorter than one minute.

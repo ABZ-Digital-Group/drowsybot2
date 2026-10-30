@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import {
   Client,
   ActionRowBuilder,
+  ActivityType,
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
@@ -91,11 +92,12 @@ const intents = [
   GatewayIntentBits.GuildMessages,
   GatewayIntentBits.GuildScheduledEvents,
   GatewayIntentBits.MessageContent,
+  GatewayIntentBits.GuildMessageReactions,
 ];
 if (enablePresenceIntent) intents.push(GatewayIntentBits.GuildPresences);
 const client = new Client({
   intents,
-  partials: [Partials.GuildMember],
+  partials: [Partials.GuildMember, Partials.Message, Partials.Reaction, Partials.Channel],
 });
 const voiceJoinTimes = new Map<string, number>();
 
@@ -297,6 +299,22 @@ async function startAdminApi(): Promise<void> {
           .filter((guild) => !requestedGuildId || guild.id === requestedGuildId)
           .map((guild) => ({ guildId: guild.id, guildName: guild.name, memberCount: guild.memberCount, ...memberStatsStore.get(guild.id) }));
         return sendJson(response, 200, { ok: true, guilds });
+      }
+
+      if (url.pathname === '/admin/api/analytics' && request.method === 'GET') {
+        const requestedGuildId = url.searchParams.get('guildId');
+        const requestedDays = Number(url.searchParams.get('days') || 14);
+        const days = Number.isFinite(requestedDays) ? Math.min(90, Math.max(1, Math.floor(requestedDays))) : 14;
+        const guilds = client.guilds.cache
+          .filter((guild) => !requestedGuildId || guild.id === requestedGuildId)
+          .map((guild) => ({
+            guildId: guild.id,
+            guildName: guild.name,
+            memberCount: guild.memberCount,
+            current: memberStatsStore.get(guild.id),
+            daily: memberStatsStore.getDailyHistory(guild.id, days),
+          }));
+        return sendJson(response, 200, { ok: true, days, guilds });
       }
 
       if (url.pathname === '/admin/api/settings' && request.method === 'POST') {
@@ -844,14 +862,9 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 });
 
 client.on('messageCreate', async (message) => {
-  if (
-    !message.guildId ||
-    message.author.bot ||
-    allowedLinkUserIds.has(message.author.id) ||
-    !containsDiscordInvite(message)
-  ) {
-    return;
-  }
+  if (!message.guildId || message.author.bot) return;
+  memberStatsStore.recordMessage(message.guildId, message.author.id);
+  if (allowedLinkUserIds.has(message.author.id) || !containsDiscordInvite(message)) return;
 
   try {
     await message.delete();
@@ -859,6 +872,22 @@ client.on('messageCreate', async (message) => {
   } catch (error) {
     console.error('Failed to moderate Discord invite:', error);
   }
+});
+
+client.on('messageReactionAdd', (reaction, user) => {
+  if (!reaction.message.guildId || user.bot) return;
+  memberStatsStore.recordReaction(reaction.message.guildId, user.id);
+});
+
+client.on('presenceUpdate', (oldPresence, newPresence) => {
+  const guildId = newPresence.guild?.id;
+  const userId = newPresence.userId;
+  if (!guildId || !userId || newPresence.member?.user.bot) return;
+  const activities = newPresence.activities
+    .filter((activity) => activity.type === ActivityType.Playing || activity.type === ActivityType.Streaming)
+    .map((activity) => activity.name.trim())
+    .filter(Boolean);
+  memberStatsStore.recordPresence(guildId, userId, activities);
 });
 
 client.on('interactionCreate', async (interaction) => {
